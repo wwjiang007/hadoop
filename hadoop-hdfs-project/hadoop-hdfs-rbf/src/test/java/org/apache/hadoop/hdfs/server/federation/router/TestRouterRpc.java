@@ -233,9 +233,13 @@ public class TestRouterRpc {
 
     // We decrease the DN heartbeat expire interval to make them dead faster
     cluster.getCluster().getNamesystem(0).getBlockManager()
-        .getDatanodeManager().setHeartbeatExpireInterval(5000);
+        .getDatanodeManager().setHeartbeatInterval(1);
     cluster.getCluster().getNamesystem(1).getBlockManager()
-        .getDatanodeManager().setHeartbeatExpireInterval(5000);
+        .getDatanodeManager().setHeartbeatInterval(1);
+    cluster.getCluster().getNamesystem(0).getBlockManager()
+        .getDatanodeManager().setHeartbeatExpireInterval(3000);
+    cluster.getCluster().getNamesystem(1).getBlockManager()
+        .getDatanodeManager().setHeartbeatExpireInterval(3000);
   }
 
   @AfterClass
@@ -1346,9 +1350,9 @@ public class TestRouterRpc {
 
     // Verify that checking that datanode works
     BlocksWithLocations routerBlockLocations =
-        routerNamenodeProtocol.getBlocks(dn0, 1024, 0);
+        routerNamenodeProtocol.getBlocks(dn0, 1024, 0, 0);
     BlocksWithLocations nnBlockLocations =
-        nnNamenodeProtocol.getBlocks(dn0, 1024, 0);
+        nnNamenodeProtocol.getBlocks(dn0, 1024, 0, 0);
     BlockWithLocations[] routerBlocks = routerBlockLocations.getBlocks();
     BlockWithLocations[] nnBlocks = nnBlockLocations.getBlocks();
     assertEquals(nnBlocks.length, routerBlocks.length);
@@ -1859,7 +1863,7 @@ public class TestRouterRpc {
         }
         return datanodeReport.length == dn.length;
       }
-    }, 500, 5 * 1000);
+    }, 100, 10 * 1000);
 
     // The cache should be updated now
     final DatanodeInfo[] datanodeReport3 =
