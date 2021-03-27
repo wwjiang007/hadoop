@@ -97,7 +97,7 @@ public class DelegationTokenRenewer
     public boolean equals(final Object that) {
       if (this == that) {
         return true;
-      } else if (that == null || !(that instanceof RenewAction)) {
+      } else if (!(that instanceof RenewAction)) {
         return false;
       }
       return token.equals(((RenewAction<?>)that).token);
@@ -223,7 +223,7 @@ public class DelegationTokenRenewer
     if (action.token != null) {
       queue.add(action);
     } else {
-      fs.LOG.error("does not have a token for renewal");
+      FileSystem.LOG.error("does not have a token for renewal");
     }
     return action;
   }
@@ -247,7 +247,6 @@ public class DelegationTokenRenewer
     }
   }
 
-  @SuppressWarnings("static-access")
   @Override
   public void run() {
     for(;;) {
@@ -260,8 +259,7 @@ public class DelegationTokenRenewer
       } catch (InterruptedException ie) {
         return;
       } catch (Exception ie) {
-        action.weakFs.get().LOG.warn("Failed to renew token, action=" + action,
-            ie);
+        FileSystem.LOG.warn("Failed to renew token, action=" + action, ie);
       }
     }
   }
