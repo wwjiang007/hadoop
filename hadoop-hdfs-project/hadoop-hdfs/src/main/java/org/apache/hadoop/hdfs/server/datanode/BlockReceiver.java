@@ -369,7 +369,7 @@ class BlockReceiver implements Closeable {
       streams.close();
     }
     if (replicaHandler != null) {
-      IOUtils.cleanup(null, replicaHandler);
+      IOUtils.cleanupWithLogger(null, replicaHandler);
       replicaHandler = null;
     }
     if (measuredFlushTime) {
@@ -1551,11 +1551,12 @@ class BlockReceiver implements Closeable {
         DatanodeRegistration dnR = datanode.getDNRegistrationForBP(block
             .getBlockPoolId());
         ClientTraceLog.info(String.format(DN_CLIENTTRACE_FORMAT, inAddr,
-            myAddr, block.getNumBytes(), "HDFS_WRITE", clientname, offset,
-            dnR.getDatanodeUuid(), block, endTime - startTime));
+            myAddr, replicaInfo.getVolume(), block.getNumBytes(),
+            "HDFS_WRITE", clientname, offset, dnR.getDatanodeUuid(),
+            block, endTime - startTime));
       } else {
-        LOG.info("Received " + block + " size " + block.getNumBytes()
-            + " from " + inAddr);
+        LOG.info("Received " + block + " on volume "  + replicaInfo.getVolume()
+            + " size " + block.getNumBytes() + " from " + inAddr);
       }
     }
     

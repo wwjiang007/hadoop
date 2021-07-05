@@ -18,25 +18,15 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.util.Time;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.authorize.AccessControlList;
+import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.util.Sets;
+import org.apache.hadoop.util.Time;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.QueueACL;
@@ -58,13 +48,13 @@ import org.apache.hadoop.yarn.security.PrivilegedEntity.EntityType;
 import org.apache.hadoop.yarn.security.YarnAuthorizationProvider;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.ActivitiesManager;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.AbsoluteResourceType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueResourceQuotas;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.ActivitiesManager;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.AbsoluteResourceType;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.ContainerAllocationProposal;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.ResourceCommitRequest;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.SchedulerContainer;
@@ -74,9 +64,19 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.placement.SimpleC
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.apache.hadoop.yarn.util.resource.Resources;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import org.apache.hadoop.thirdparty.com.google.common.collect.Sets;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.DOT;
 import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration.UNDEFINED;
 
 public abstract class AbstractCSQueue implements CSQueue {
@@ -96,6 +96,7 @@ public abstract class AbstractCSQueue implements CSQueue {
 
   final ResourceCalculator resourceCalculator;
   Set<String> accessibleLabels;
+  protected Set<String> configuredNodeLabels;
   Set<String> resourceTypes;
   final RMNodeLabelsManager labelManager;
   String defaultLabelExpression;
@@ -209,7 +210,7 @@ public abstract class AbstractCSQueue implements CSQueue {
   protected void setupConfigurableCapacities(
       CapacitySchedulerConfiguration configuration) {
     CSQueueUtils.loadCapacitiesByLabelsFromConf(getQueuePath(), queueCapacities,
-        configuration);
+        configuration, configuredNodeLabels);
   }
 
   @Override
@@ -361,6 +362,9 @@ public abstract class AbstractCSQueue implements CSQueue {
 
     writeLock.lock();
     try {
+      if (isDynamicQueue() || this instanceof AbstractAutoCreatedLeafQueue) {
+        setDynamicQueueProperties(configuration);
+      }
       // get labels
       this.accessibleLabels =
           configuration.getAccessibleNodeLabels(getQueuePath());
@@ -382,6 +386,17 @@ public abstract class AbstractCSQueue implements CSQueue {
           && this.accessibleLabels.containsAll(
           parent.getAccessibleNodeLabels())) {
         this.defaultLabelExpression = parent.getDefaultNodeLabelExpression();
+      }
+
+      if (csContext.getCapacitySchedulerQueueManager() != null
+          && csContext.getCapacitySchedulerQueueManager()
+          .getConfiguredNodeLabels() != null) {
+        this.configuredNodeLabels = csContext.getCapacitySchedulerQueueManager()
+            .getConfiguredNodeLabels().getLabelsByQueue(getQueuePath());
+      } else {
+        // Fallback to suboptimal but correct logic
+        this.configuredNodeLabels = csContext.getConfiguration()
+            .getConfiguredNodeLabels(queuePath);
       }
 
       // After we setup labels, we can setup capacities
@@ -475,6 +490,32 @@ public abstract class AbstractCSQueue implements CSQueue {
     }
   }
 
+  /**
+   * Set properties specific to dynamic queues.
+   * @param configuration configuration on which the properties are set
+   */
+  protected void setDynamicQueueProperties(
+      CapacitySchedulerConfiguration configuration) {
+    // Set properties from parent template
+    if (getParent() instanceof ParentQueue) {
+      ((ParentQueue) getParent()).getAutoCreatedQueueTemplate()
+          .setTemplateEntriesForChild(configuration, getQueuePath());
+
+      String parentTemplate = String.format("%s.%s", getParent().getQueuePath(),
+          AutoCreatedQueueTemplate.AUTO_QUEUE_TEMPLATE_PREFIX);
+      parentTemplate = parentTemplate.substring(0, parentTemplate.lastIndexOf(
+          DOT));
+      Set<String> parentNodeLabels = csContext
+          .getCapacitySchedulerQueueManager().getConfiguredNodeLabels()
+          .getLabelsByQueue(parentTemplate);
+
+      if (parentNodeLabels != null && parentNodeLabels.size() > 1) {
+        csContext.getCapacitySchedulerQueueManager().getConfiguredNodeLabels()
+            .setLabelsByQueue(queuePath, new HashSet<>(parentNodeLabels));
+      }
+    }
+  }
+
   private void setupMaximumAllocation(CapacitySchedulerConfiguration csConf) {
     String myQueuePath = getQueuePath();
     Resource clusterMax = ResourceUtils
@@ -556,10 +597,7 @@ public abstract class AbstractCSQueue implements CSQueue {
 
   protected void updateConfigurableResourceRequirement(String queuePath,
       Resource clusterResource) {
-    CapacitySchedulerConfiguration conf = csContext.getConfiguration();
-    Set<String> configuredNodelabels = conf.getConfiguredNodeLabels(queuePath);
-
-    for (String label : configuredNodelabels) {
+    for (String label : configuredNodeLabels) {
       Resource minResource = getMinimumAbsoluteResource(queuePath, label);
       Resource maxResource = getMaximumAbsoluteResource(queuePath, label);
 
@@ -1563,9 +1601,7 @@ public abstract class AbstractCSQueue implements CSQueue {
   }
 
   void updateEffectiveResources(Resource clusterResource) {
-    Set<String> configuredNodelabels =
-        csContext.getConfiguration().getConfiguredNodeLabels(getQueuePath());
-    for (String label : configuredNodelabels) {
+    for (String label : configuredNodeLabels) {
       Resource resourceByLabel = labelManager.getResourceByLabel(label,
           clusterResource);
 
@@ -1700,5 +1736,4 @@ public abstract class AbstractCSQueue implements CSQueue {
       writeLock.unlock();
     }
   }
-
 }
